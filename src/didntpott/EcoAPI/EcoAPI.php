@@ -26,7 +26,10 @@ class EcoAPI extends PluginBase implements Listener
     private Economy $economy;
     /** @var array<string, array<string, float>> */
     private array $playerCache = [];
+    /** @var array<string, bool> */
+    private array $playerDirty = [];
     private bool $useCache = true;
+    private ?\SQLite3Stmt $upsertPlayerStmt = null;
 
     public function onEnable(): void
     {
@@ -94,10 +97,19 @@ class EcoAPI extends PluginBase implements Listener
 
     private function saveAllPlayerData(): void
     {
+        if (empty($this->playerCache)) {
+            return;
+        }
+
+        $stmt = $this->getUpsertPlayerStatement();
+        if ($stmt === null) {
+            return;
+        }
+
+        $this->db->exec("BEGIN IMMEDIATE");
+
         foreach ($this->playerCache as $name => $data) {
-            $stmt = $this->db->prepare("UPDATE player SET balance = :balance, tokens = :tokens, multiplier = :multiplier WHERE player_name = :player_name");
-            if (!$stmt) {
-                $this->getLogger()->error("Failed to prepare statement to save player data for $name");
+            if (!$this->isPlayerDirty($name)) {
                 continue;
             }
 
@@ -107,25 +119,17 @@ class EcoAPI extends PluginBase implements Listener
             $stmt->bindValue(":player_name", $name, SQLITE3_TEXT);
             $stmt->execute();
 
-            if ($this->db->changes() === 0) {
-                $this->getLogger()->warning("No changes detected when saving data for player $name");
-            }
+            $this->playerDirty[$name] = false;
         }
+
+        $this->db->exec("COMMIT");
     }
 
     public function onPlayerJoin(PlayerJoinEvent $event): void
     {
         if (!$this->useCache) return;
 
-        $player = $event->getPlayer();
-        $name = strtolower($player->getName());
-
-        // Load player data into cache
-        $this->playerCache[$name] = [
-            'balance' => $this->economy->getBalance($player),
-            'tokens' => $this->economy->getTokens($player),
-            'multiplier' => $this->economy->getMultiplier($player)
-        ];
+        $this->economy->primeCache($event->getPlayer());
     }
 
     public function onPlayerQuit(PlayerQuitEvent $event): void
@@ -137,17 +141,17 @@ class EcoAPI extends PluginBase implements Listener
 
         $this->savePlayerData($player);
         unset($this->playerCache[$name]);
+        unset($this->playerDirty[$name]);
     }
 
     private function savePlayerData(Player $player): void
     {
         $name = strtolower($player->getName());
-        if (!isset($this->playerCache[$name])) return;
+        if (!isset($this->playerCache[$name]) || !$this->isPlayerDirty($name)) return;
 
         $data = $this->playerCache[$name];
-        $stmt = $this->db->prepare("UPDATE player SET balance = :balance, tokens = :tokens, multiplier = :multiplier WHERE player_name = :player_name");
-        if (!$stmt) {
-            $this->getLogger()->error("Failed to prepare statement to save player data for $name");
+        $stmt = $this->getUpsertPlayerStatement();
+        if ($stmt === null) {
             return;
         }
 
@@ -157,19 +161,7 @@ class EcoAPI extends PluginBase implements Listener
         $stmt->bindValue(":player_name", $name, SQLITE3_TEXT);
         $stmt->execute();
 
-        if ($this->db->changes() === 0) {
-            $stmtInsert = $this->db->prepare("INSERT INTO player (player_name, balance, tokens, multiplier) VALUES (:player_name, :balance, :tokens, :multiplier)");
-            if (!$stmtInsert) {
-                $this->getLogger()->error("Failed to prepare insert statement for player $name");
-                return;
-            }
-
-            $stmtInsert->bindValue(":player_name", $name, SQLITE3_TEXT);
-            $stmtInsert->bindValue(":balance", $data['balance'], SQLITE3_FLOAT);
-            $stmtInsert->bindValue(":tokens", $data['tokens'], SQLITE3_FLOAT);
-            $stmtInsert->bindValue(":multiplier", $data['multiplier'], SQLITE3_FLOAT);
-            $stmtInsert->execute();
-        }
+        $this->playerDirty[$name] = false;
     }
 
     public function getDatabase(): SQLite3
@@ -187,12 +179,30 @@ class EcoAPI extends PluginBase implements Listener
         return $this->playerCache;
     }
 
+    public function setPlayerCache(string $playerName, array $data): void
+    {
+        if (!$this->useCache) return;
+
+        $playerName = strtolower($playerName);
+        $this->playerCache[$playerName] = [
+            'balance' => $data['balance'] ?? 0.0,
+            'tokens' => $data['tokens'] ?? 0.0,
+            'multiplier' => $data['multiplier'] ?? 1.0
+        ];
+        $this->playerDirty[$playerName] = $this->playerDirty[$playerName] ?? false;
+    }
+
+    public function hasCachedPlayer(string $playerName): bool
+    {
+        return isset($this->playerCache[strtolower($playerName)]);
+    }
+
     public function isCacheEnabled(): bool
     {
         return $this->useCache;
     }
 
-    public function updateCache(string $playerName, string $field, float $value): void
+    public function updateCache(string $playerName, string $field, float $value, bool $markDirty = true): void
     {
         if (!$this->useCache) return;
 
@@ -206,6 +216,9 @@ class EcoAPI extends PluginBase implements Listener
         }
 
         $this->playerCache[$playerName][$field] = $value;
+        if ($markDirty) {
+            $this->playerDirty[$playerName] = true;
+        }
     }
 
     public function getFromCache(string $playerName, string $field, float $default = 0.0): float
@@ -214,5 +227,38 @@ class EcoAPI extends PluginBase implements Listener
 
         $playerName = strtolower($playerName);
         return $this->playerCache[$playerName][$field] ?? $default;
+    }
+
+    public function markPlayerDirty(string $playerName): void
+    {
+        if (!$this->useCache) return;
+
+        $this->playerDirty[strtolower($playerName)] = true;
+    }
+
+    private function isPlayerDirty(string $playerName): bool
+    {
+        return $this->playerDirty[strtolower($playerName)] ?? false;
+    }
+
+    private function getUpsertPlayerStatement(): ?\SQLite3Stmt
+    {
+        if ($this->upsertPlayerStmt === null) {
+            $stmt = $this->db->prepare(
+                "INSERT INTO player (player_name, balance, tokens, multiplier)
+                VALUES (:player_name, :balance, :tokens, :multiplier)
+                ON CONFLICT(player_name) DO UPDATE SET
+                    balance = excluded.balance,
+                    tokens = excluded.tokens,
+                    multiplier = excluded.multiplier"
+            );
+            if ($stmt === false) {
+                $this->getLogger()->error("Failed to prepare upsert statement for player data.");
+                return null;
+            }
+            $this->upsertPlayerStmt = $stmt;
+        }
+
+        return $this->upsertPlayerStmt;
     }
 }

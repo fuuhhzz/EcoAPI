@@ -17,6 +17,10 @@ class Economy
     private EcoAPI $plugin;
     private float $startingBalance;
     private float $startingTokens;
+    /** @var array<string, \SQLite3Stmt> */
+    private array $upsertFieldStatements = [];
+    /** @var array<string, \SQLite3Stmt> */
+    private array $selectFieldStatements = [];
 
     public function __construct(EcoAPI $plugin, float $startingBalance = 0.0, float $startingTokens = 0.0)
     {
@@ -40,16 +44,18 @@ class Economy
         $playerName = strtolower($player->getName());
 
         if ($this->plugin->isCacheEnabled()) {
-            $cachedValue = $this->plugin->getFromCache($playerName, $field);
-            if ($cachedValue !== 0.0 || isset($this->plugin->getPlayerCache()[$playerName])) {
-                return $cachedValue;
+            if (!$this->plugin->hasCachedPlayer($playerName)) {
+                $result = $this->fetchPlayerData($playerName);
+                $this->plugin->setPlayerCache($playerName, $result['data']);
+                if (!$result['exists']) {
+                    $this->plugin->markPlayerDirty($playerName);
+                }
             }
+
+            return $this->plugin->getFromCache($playerName, $field, $default);
         }
 
-        $stmt = $this->db->prepare("SELECT $field FROM player WHERE player_name = :player_name");
-        if (!$stmt) {
-            throw new RuntimeException("Failed to prepare statement to retrieve field `$field`.");
-        }
+        $stmt = $this->getSelectFieldStatement($field);
         $stmt->bindValue(":player_name", $playerName, SQLITE3_TEXT);
 
         $result = $stmt->execute();
@@ -92,24 +98,22 @@ class Economy
         $playerName = strtolower($player->getName());
 
         if ($this->plugin->isCacheEnabled()) {
-            $this->plugin->updateCache($playerName, $field, $value);
-        }
-        $stmt = $this->db->prepare("UPDATE player SET $field = :value WHERE player_name = :player_name");
-        if (!$stmt) {
-            throw new RuntimeException("Failed to prepare update statement for field `$field`.");
-        }
-        $stmt->bindValue(":value", $value, SQLITE3_FLOAT);
-        $stmt->bindValue(":player_name", $playerName, SQLITE3_TEXT);
-        $stmt->execute();
-        if ($this->db->changes() === 0) {
-            $stmtInsert = $this->db->prepare("INSERT INTO player (player_name, $field) VALUES (:player_name, :value)");
-            if (!$stmtInsert) {
-                throw new RuntimeException("Failed to prepare insert statement for field `$field`.");
+            if (!$this->plugin->hasCachedPlayer($playerName)) {
+                $result = $this->fetchPlayerData($playerName);
+                $this->plugin->setPlayerCache($playerName, $result['data']);
+                if (!$result['exists']) {
+                    $this->plugin->markPlayerDirty($playerName);
+                }
             }
-            $stmtInsert->bindValue(":player_name", $playerName, SQLITE3_TEXT);
-            $stmtInsert->bindValue(":value", $value, SQLITE3_FLOAT);
-            $stmtInsert->execute();
+
+            $this->plugin->updateCache($playerName, $field, $value);
+            return true;
         }
+
+        $stmt = $this->getUpsertFieldStatement($field);
+        $stmt->bindValue(":player_name", $playerName, SQLITE3_TEXT);
+        $stmt->bindValue(":value", $value, SQLITE3_FLOAT);
+        $stmt->execute();
 
         return true;
     }
@@ -206,5 +210,94 @@ class Economy
     public function formatCurrency(float $amount): string
     {
         return number_format($amount, 2, '.', ',');
+    }
+
+    public function primeCache(Player $player): void
+    {
+        if (!$this->plugin->isCacheEnabled()) {
+            return;
+        }
+
+        $playerName = strtolower($player->getName());
+        if ($this->plugin->hasCachedPlayer($playerName)) {
+            return;
+        }
+
+        $result = $this->fetchPlayerData($playerName);
+        $this->plugin->setPlayerCache($playerName, $result['data']);
+        if (!$result['exists']) {
+            $this->plugin->markPlayerDirty($playerName);
+        }
+    }
+
+    private function fetchPlayerData(string $playerName): array
+    {
+        $stmt = $this->db->prepare("SELECT balance, tokens, multiplier FROM player WHERE player_name = :player_name");
+        if (!$stmt) {
+            throw new RuntimeException("Failed to prepare statement to retrieve player data.");
+        }
+        $stmt->bindValue(":player_name", $playerName, SQLITE3_TEXT);
+
+        $result = $stmt->execute();
+        if (!$result) {
+            throw new RuntimeException("Failed to execute statement while retrieving player data.");
+        }
+
+        $row = $result->fetchArray(SQLITE3_ASSOC);
+        if ($row === false) {
+            return [
+                'data' => $this->getDefaultData(),
+                'exists' => false
+            ];
+        }
+
+        return [
+            'data' => [
+                'balance' => isset($row['balance']) ? (float)$row['balance'] : $this->startingBalance,
+                'tokens' => isset($row['tokens']) ? (float)$row['tokens'] : $this->startingTokens,
+                'multiplier' => isset($row['multiplier']) ? (float)$row['multiplier'] : 1.0
+            ],
+            'exists' => true
+        ];
+    }
+
+    private function getDefaultData(): array
+    {
+        return [
+            'balance' => $this->startingBalance,
+            'tokens' => $this->startingTokens,
+            'multiplier' => 1.0
+        ];
+    }
+
+    private function getUpsertFieldStatement(string $field): \SQLite3Stmt
+    {
+        if (!isset($this->upsertFieldStatements[$field])) {
+            $stmt = $this->db->prepare(
+                "INSERT INTO player (player_name, $field)
+                VALUES (:player_name, :value)
+                ON CONFLICT(player_name) DO UPDATE SET
+                    $field = excluded.$field"
+            );
+            if (!$stmt) {
+                throw new RuntimeException("Failed to prepare upsert statement for field `$field`.");
+            }
+            $this->upsertFieldStatements[$field] = $stmt;
+        }
+
+        return $this->upsertFieldStatements[$field];
+    }
+
+    private function getSelectFieldStatement(string $field): \SQLite3Stmt
+    {
+        if (!isset($this->selectFieldStatements[$field])) {
+            $stmt = $this->db->prepare("SELECT $field FROM player WHERE player_name = :player_name");
+            if (!$stmt) {
+                throw new RuntimeException("Failed to prepare statement to retrieve field `$field`.");
+            }
+            $this->selectFieldStatements[$field] = $stmt;
+        }
+
+        return $this->selectFieldStatements[$field];
     }
 }

@@ -28,7 +28,11 @@ class TopBalanceCommand extends Command
             }
         }
 
-        $db = EcoAPI::getInstance()->getDatabase();
+        $api = EcoAPI::getInstance();
+        $db = $api->getDatabase();
+        $cache = $api->isCacheEnabled() ? $api->getPlayerCache() : [];
+        $queryLimit = $limit + count($cache);
+
         $stmt = $db->prepare("SELECT player_name, balance FROM player ORDER BY balance DESC LIMIT :limit");
 
         if (!$stmt) {
@@ -36,7 +40,7 @@ class TopBalanceCommand extends Command
             return true;
         }
 
-        $stmt->bindValue(":limit", $limit, SQLITE3_INTEGER);
+        $stmt->bindValue(":limit", $queryLimit, SQLITE3_INTEGER);
         $result = $stmt->execute();
 
         if (!$result) {
@@ -44,18 +48,19 @@ class TopBalanceCommand extends Command
             return true;
         }
 
-        $economy = EcoAPI::getInstance()->getEconomy();
-        $topBalance = [];
+        $economy = $api->getEconomy();
+        $balances = [];
 
-        $position = 1;
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            $topBalance[] = [
-                "position" => $position,
-                "name" => $row['player_name'],
-                "balance" => $row['balance']
-            ];
-            $position++;
+            $balances[$row['player_name']] = (float)$row['balance'];
         }
+
+        foreach ($cache as $playerName => $data) {
+            $balances[$playerName] = $data['balance'] ?? 0.0;
+        }
+
+        arsort($balances, SORT_NUMERIC);
+        $topBalance = array_slice($balances, 0, $limit, true);
 
         $sender->sendMessage(MessageHandler::getInstance()->getMessage("topbalance.header", [
             "count" => count($topBalance)
@@ -66,12 +71,14 @@ class TopBalanceCommand extends Command
             return true;
         }
 
-        foreach ($topBalance as $entry) {
+        $position = 1;
+        foreach ($topBalance as $playerName => $balance) {
             $sender->sendMessage(MessageHandler::getInstance()->getMessage("topbalance.entry", [
-                "position" => $entry["position"],
-                "player" => $entry["name"],
-                "balance" => $economy->formatCurrency($entry["balance"])
+                "position" => $position,
+                "player" => $playerName,
+                "balance" => $economy->formatCurrency($balance)
             ]));
+            $position++;
         }
 
         return true;

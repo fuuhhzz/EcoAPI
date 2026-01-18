@@ -4,6 +4,8 @@ version: 1.0.0
 api: 5.0.0
 author: didntpott
 description: A powerful and optimized economy management plugin for PocketMine 5 servers
+softdepend:
+  - FormAPI
 
 permissions:
   economy.commands:

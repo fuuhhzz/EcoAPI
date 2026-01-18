@@ -4,6 +4,7 @@ namespace didntpott\EcoAPI\commands;
 
 use didntpott\EcoAPI\EcoAPI;
 use didntpott\EcoAPI\utils\MessageHandler;
+use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
 use pocketmine\player\Player;
@@ -23,6 +24,11 @@ class TokenCommand extends Command
             return true;
         }
 
+        if ($this->isFormApiAvailable()) {
+            $this->showTokenForm($sender);
+            return true;
+        }
+
         $economy = EcoAPI::getInstance()->getEconomy();
         $tokens = $economy->formatCurrency($economy->getTokens($sender));
 
@@ -31,5 +37,23 @@ class TokenCommand extends Command
         ]);
 
         return true;
+    }
+
+    private function showTokenForm(Player $player): void
+    {
+        $economy = EcoAPI::getInstance()->getEconomy();
+        $tokens = $economy->formatCurrency($economy->getTokens($player));
+
+        $form = new SimpleForm(function (Player $player, ?int $data): void {
+        });
+        $form->setTitle("Tokens");
+        $form->setContent("Your tokens: " . $tokens);
+        $form->addButton("OK");
+        $player->sendForm($form);
+    }
+
+    private function isFormApiAvailable(): bool
+    {
+        return class_exists(SimpleForm::class);
     }
 }

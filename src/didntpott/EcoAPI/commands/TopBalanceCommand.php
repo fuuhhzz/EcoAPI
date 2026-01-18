@@ -4,8 +4,10 @@ namespace didntpott\EcoAPI\commands;
 
 use didntpott\EcoAPI\EcoAPI;
 use didntpott\EcoAPI\utils\MessageHandler;
+use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
+use pocketmine\player\Player;
 
 class TopBalanceCommand extends Command
 {
@@ -62,6 +64,11 @@ class TopBalanceCommand extends Command
         arsort($balances, SORT_NUMERIC);
         $topBalance = array_slice($balances, 0, $limit, true);
 
+        if ($sender instanceof Player && $this->isFormApiAvailable()) {
+            $this->showTopBalanceForm($sender, $topBalance, $economy);
+            return true;
+        }
+
         $sender->sendMessage(MessageHandler::getInstance()->getMessage("topbalance.header", [
             "count" => count($topBalance)
         ]));
@@ -82,5 +89,33 @@ class TopBalanceCommand extends Command
         }
 
         return true;
+    }
+
+    private function showTopBalanceForm(Player $player, array $topBalance, $economy): void
+    {
+        $count = count($topBalance);
+        $lines = [];
+
+        if ($count === 0) {
+            $lines[] = MessageHandler::getInstance()->getMessage("topbalance.empty");
+        } else {
+            $position = 1;
+            foreach ($topBalance as $playerName => $balance) {
+                $lines[] = "#" . $position . " " . $playerName . ": " . $economy->formatCurrency($balance);
+                $position++;
+            }
+        }
+
+        $form = new SimpleForm(function (Player $player, ?int $data): void {
+        });
+        $form->setTitle("Top " . $count . " Balances");
+        $form->setContent(implode("\n", $lines));
+        $form->addButton("OK");
+        $player->sendForm($form);
+    }
+
+    private function isFormApiAvailable(): bool
+    {
+        return class_exists(SimpleForm::class);
     }
 }

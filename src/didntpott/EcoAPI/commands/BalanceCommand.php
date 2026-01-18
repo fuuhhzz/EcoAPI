@@ -4,6 +4,7 @@ namespace didntpott\EcoAPI\commands;
 
 use didntpott\EcoAPI\EcoAPI;
 use didntpott\EcoAPI\utils\MessageHandler;
+use jojoe77777\FormAPI\SimpleForm;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
 use pocketmine\player\Player;
@@ -23,6 +24,11 @@ class BalanceCommand extends Command
             return true;
         }
 
+        if ($this->isFormApiAvailable()) {
+            $this->showBalanceForm($sender);
+            return true;
+        }
+
         $api = EcoAPI::getInstance();
         $balance = $api->getEconomy()->formatCurrency($api->getEconomy()->getBalance($sender));
 
@@ -31,5 +37,23 @@ class BalanceCommand extends Command
         ]);
 
         return true;
+    }
+
+    private function showBalanceForm(Player $player): void
+    {
+        $api = EcoAPI::getInstance();
+        $balance = $api->getEconomy()->formatCurrency($api->getEconomy()->getBalance($player));
+
+        $form = new SimpleForm(function (Player $player, ?int $data): void {
+        });
+        $form->setTitle("Balance");
+        $form->setContent("Your balance: " . $balance);
+        $form->addButton("OK");
+        $player->sendForm($form);
+    }
+
+    private function isFormApiAvailable(): bool
+    {
+        return class_exists(SimpleForm::class);
     }
 }

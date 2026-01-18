@@ -4,6 +4,7 @@ namespace didntpott\EcoAPI\commands;
 
 use didntpott\EcoAPI\EcoAPI;
 use didntpott\EcoAPI\utils\MessageHandler;
+use jojoe77777\FormAPI\CustomForm;
 use pocketmine\command\Command;
 use pocketmine\command\CommandSender;
 use pocketmine\player\Player;
@@ -24,6 +25,11 @@ class PayCommand extends Command
         }
 
         if (count($args) < 2) {
+            if ($this->isFormApiAvailable()) {
+                $this->showPayForm($sender);
+                return true;
+            }
+
             MessageHandler::getInstance()->sendMessage($sender, "help.usage-pay");
             return true;
         }
@@ -72,5 +78,48 @@ class PayCommand extends Command
         ]);
 
         return true;
+    }
+
+    private function showPayForm(Player $player): void
+    {
+        $playerNames = [];
+        foreach (EcoAPI::getInstance()->getServer()->getOnlinePlayers() as $onlinePlayer) {
+            if ($onlinePlayer->getName() === $player->getName()) {
+                continue;
+            }
+            $playerNames[] = $onlinePlayer->getName();
+        }
+
+        if (empty($playerNames)) {
+            MessageHandler::getInstance()->sendMessage($player, "error.player-not-found", [
+                "player" => "any online player"
+            ]);
+            return;
+        }
+
+        $form = new CustomForm(function (Player $player, ?array $data) use ($playerNames): void {
+            if ($data === null) {
+                return;
+            }
+
+            $playerIndex = (int)($data[0] ?? -1);
+            $amount = (float)($data[1] ?? 0);
+            if (!isset($playerNames[$playerIndex])) {
+                return;
+            }
+
+            $targetName = $playerNames[$playerIndex];
+            $this->execute($player, "pay", [$targetName, (string)$amount]);
+        });
+
+        $form->setTitle("Pay");
+        $form->addDropdown("Player", $playerNames);
+        $form->addInput("Amount", "100", "0");
+        $player->sendForm($form);
+    }
+
+    private function isFormApiAvailable(): bool
+    {
+        return class_exists(CustomForm::class);
     }
 }

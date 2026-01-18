@@ -9,6 +9,7 @@ A powerful and optimized economy management plugin for PocketMine 5 servers.
 - **Multiplier System**: Player-specific multipliers for economy activities
 - **SQLite Database**: Persistent storage of player economy data
 - **Economy Commands**: Full suite of economy management commands
+- **Optional Forms UI**: FormAPI-backed menus for supported commands
 - **Developer API**: Easy-to-use API for developers to integrate with
 - **Customizable Messages**: All messages can be customized in the config file
 
@@ -24,6 +25,7 @@ A powerful and optimized economy management plugin for PocketMine 5 servers.
 | `/economy set <player> <amount>` | Set a player's balance | economy.command.set |
 | `/economy reset <player>` | Reset a player's economy data | economy.command.reset |
 | `/economy info <player>` | View a player's economy info | economy.command.info |
+| `/topbalance [limit]` | View players with highest balance | economy.commands.default |
 
 ## Permissions
 
@@ -59,6 +61,10 @@ database-type: sqlite
 # Format Settings
 # Currency symbol to use when formatting amounts
 currency-symbol: "$"
+
+# Form Settings
+# Enable FormAPI-based UI (requires FormAPI plugin)
+use-forms: true
 
 # Messages
 # All plugin messages can be customized here
@@ -147,6 +153,7 @@ public function tryPurchase(Player $player, float $cost): bool {
 1. Download the latest release from GitHub
 2. Place it in your server's `plugins` folder
 3. Restart your server
+4. (Optional) Install FormAPI to enable forms UI: https://github.com/jojoe77777/FormAPI
 4. Configure the plugin in the `config.yml` file
 
 ## Contributing

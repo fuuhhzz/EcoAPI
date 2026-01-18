@@ -20,6 +20,10 @@ database-type: sqlite
 # Currency symbol to use when formatting amounts
 currency-symbol: "$"
 
+# Form Settings
+# Enable FormAPI-based UI (requires FormAPI plugin)
+use-forms: false
+
 # Messages
 # You can use the following placeholders:
 # {player} - Target player's name

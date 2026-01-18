@@ -116,6 +116,10 @@ class TopBalanceCommand extends Command
 
     private function isFormApiAvailable(): bool
     {
-        return class_exists(SimpleForm::class);
+        if (!class_exists(SimpleForm::class)) {
+            return false;
+        }
+
+        return EcoAPI::getInstance()->getConfig()->get("use-forms", true);
     }
 }

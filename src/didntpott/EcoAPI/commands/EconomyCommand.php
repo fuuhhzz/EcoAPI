@@ -335,7 +335,11 @@ class EconomyCommand extends Command
 
     private function isFormApiAvailable(): bool
     {
-        return class_exists(SimpleForm::class) && class_exists(CustomForm::class);
+        if (!class_exists(SimpleForm::class) || !class_exists(CustomForm::class)) {
+            return false;
+        }
+
+        return EcoAPI::getInstance()->getConfig()->get("use-forms", true);
     }
 
     private function showHelp(CommandSender $sender): void

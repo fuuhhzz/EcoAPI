@@ -120,6 +120,10 @@ class PayCommand extends Command
 
     private function isFormApiAvailable(): bool
     {
-        return class_exists(CustomForm::class);
+        if (!class_exists(CustomForm::class)) {
+            return false;
+        }
+
+        return EcoAPI::getInstance()->getConfig()->get("use-forms", true);
     }
 }
